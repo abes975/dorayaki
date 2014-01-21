@@ -103,8 +103,12 @@ START_TEST (socket_pool_release_test)
     ck_assert(rel2->prev == rel1);
     ck_assert(rel3->prev == rel2);
     ck_assert(rel4->prev == rel3);
+    ck_assert(rel1->next->next->next == rel4);
     ck_assert(rel1->next->next == rel3);
+    ck_assert(rel1->next == rel2);
     ck_assert(rel2->next->next == rel4);
+    ck_assert(rel2->next == rel3);
+    ck_assert(rel3->next == rel4);
     ck_assert(rel4->next == NULL);
 
     /* Acquire first element (rel1) */
@@ -129,8 +133,8 @@ START_TEST (socket_pool_release_test)
     ck_assert(p->free_head->next == rel3);
     ck_assert(p->free_head->next->next == rel4);
     ck_assert(p->free_head->prev == NULL);
-    ck_assert(rel3->prev == rel2);
-    ck_assert(rel4->prev == rel3);
+    ck_assert(p->free_head->next->prev == rel2);
+    ck_assert(p->free_head->next->next->prev == rel3);
 
     /* 
     *    acquire another element
@@ -141,9 +145,9 @@ START_TEST (socket_pool_release_test)
     ck_assert(acq2 == rel2);
     ck_assert(p->used_head == acq2);
     ck_assert(p->used_head->next == acq1);
+    ck_assert(p->used_head->next->next == NULL);
+    ck_assert(p->used_head->next->prev == acq2);  
     ck_assert(p->used_head->prev == NULL);    
-    ck_assert(acq1->prev == acq2);
-    ck_assert(acq1->next == NULL);
     ck_assert_int_eq(socket_pool_how_many_used(p), socket_pool_capacity(p) -
         socket_pool_how_many_free(p));
     ck_assert_int_eq(socket_pool_how_many_free(p), 
@@ -158,6 +162,7 @@ START_TEST (socket_pool_release_test)
     ck_assert(p->free_head->next == rel4);
     ck_assert(p->free_head->next->next == NULL);
     ck_assert(p->free_head->prev == NULL);
+    ck_assert(p->free_head->next->prev == rel3);
 
     /*
     *   Acquire third element
@@ -220,21 +225,27 @@ START_TEST (socket_pool_release_test)
     *   used list should be now acq4->acq3->acq1
     *   and free_list should be acq2
     */
-    ck_assert(acq3->next == acq2);
     res = socket_pool_release(p, acq2);
     ck_assert(res == true);
     ck_assert_int_eq(socket_pool_how_many_used(p), socket_pool_capacity(p) -
         socket_pool_how_many_free(p));
     ck_assert_int_eq(socket_pool_how_many_free(p), 
             socket_pool_capacity(p) - socket_pool_how_many_used(p));
-    ck_assert(acq3->next == acq1);
-    ck_assert(acq1->prev == acq3);
+
+    ck_assert(p->used_head == acq4);
+    ck_assert(p->used_head->next == acq3);
+    ck_assert(p->used_head->prev == NULL);
+    ck_assert(p->used_head->next->next == acq1);
+    ck_assert(p->used_head->next->prev == acq4); 
+    ck_assert(p->used_head->next->next->next == NULL);
+    ck_assert(p->used_head->next->next->prev == acq3);
+
     /* released element becomes new free list head */
     ck_assert(p->free_head == acq2);
-    ck_assert(p->used_head == acq4);
+    ck_assert(p->free_head->next == NULL);
     /* head has no predecessor ever */
     ck_assert(p->free_head->prev == NULL);
-    ck_assert(p->used_head->prev == NULL);
+
 
     /*  
     *   now used_list is  acq4->acq3->acq1
@@ -242,20 +253,26 @@ START_TEST (socket_pool_release_test)
     *   Free list : acq3->acq2
     *   Used list : acq4->acq1
     */
-    ck_assert(acq3->next == acq1);
     res = socket_pool_release(p, acq3);
     ck_assert(res == true);
     ck_assert_int_eq(socket_pool_how_many_used(p), socket_pool_capacity(p) -
         socket_pool_how_many_free(p));
     ck_assert_int_eq(socket_pool_how_many_free(p), 
             socket_pool_capacity(p) - socket_pool_how_many_used(p));
-    ck_assert(acq4->next == acq1);
-    ck_assert(acq1->prev == acq4);
+
+    ck_assert(p->used_head == acq4);
+    ck_assert(p->used_head->next == acq1);
+    ck_assert(p->used_head->prev == NULL);
+    ck_assert(p->used_head->next->next == NULL);
+    ck_assert(p->used_head->next->prev == acq4);
     /* released element becomes new free list head */
     ck_assert(p->free_head == acq3);
     /* head has no predecessor ever */
     ck_assert(p->free_head->prev == NULL);
-    ck_assert(p->used_head == acq4);
+    ck_assert(p->free_head->next == acq2);
+    ck_assert(p->free_head->next->next == NULL);
+    ck_assert(p->free_head->next->prev == acq3);
+
 
     /* 
     *   Now get again acq3 so it will be the head of used list 
@@ -267,22 +284,38 @@ START_TEST (socket_pool_release_test)
     acq3 = NULL; /* clear pointer and re-aquire it */
     acq3 = socket_pool_acquire(p);
     ck_assert(acq3 != NULL);
-    ck_assert(p->free_head == acq2);
-    ck_assert(p->used_head == acq3);
     ck_assert_int_eq(socket_pool_how_many_used(p), socket_pool_capacity(p) -
         socket_pool_how_many_free(p));
     ck_assert_int_eq(socket_pool_how_many_free(p), 
             socket_pool_capacity(p) - socket_pool_how_many_used(p));
+    ck_assert(p->used_head == acq3);
+    ck_assert(p->used_head->prev == NULL);
+    ck_assert(p->used_head->next == acq4);
+    ck_assert(p->used_head->next->next == acq1);
+    ck_assert(p->used_head->next->prev == acq3);
+    ck_assert(p->used_head->next->next->next == NULL);
+    ck_assert(p->used_head->next->next->prev == acq4);
+
+    ck_assert(p->free_head == acq2);
+    ck_assert(p->free_head->next == NULL);
+    ck_assert(p->free_head->prev == NULL);
+
     /* relase so used list = acq4->acq1 and free list: acq3->acq2 */    
     res = socket_pool_release(p, acq3);
     ck_assert(res == true);
-    ck_assert(acq4->next == acq1);
-    printf("XXXXXXXXXXXXXXXXXXXXXXXXXXXX p->used_head %p\n\n", p->used_head);
-    ck_assert(acq4->prev == NULL);
-    ck_assert(p->free_head == acq3);
+    printf("MA MERDA DI MERDA used head = %p acq3 = %p acq4 = %p\n", p->used_head, acq3, acq4);
+    ck_assert(p->used_head == acq4);
+    ck_assert(p->used_head->prev == NULL);
+    ck_assert(p->used_head->next == acq1);
+    ck_assert(p->used_head->next->next == NULL);
+    ck_assert(p->used_head->next->prev == acq4);
 
+
+    ck_assert(p->free_head == acq3);
     ck_assert(p->free_head->prev == NULL);
     ck_assert(p->free_head->next == acq2);
+    ck_assert(p->free_head->next->next == NULL);
+    ck_assert(p->free_head->next->prev == acq3);
 
     /* 
     *   Used list is now acq4->acq1
