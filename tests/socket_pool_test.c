@@ -303,7 +303,6 @@ START_TEST (socket_pool_release_test)
     /* relase so used list = acq4->acq1 and free list: acq3->acq2 */    
     res = socket_pool_release(p, acq3);
     ck_assert(res == true);
-    printf("MA MERDA DI MERDA used head = %p acq3 = %p acq4 = %p\n", p->used_head, acq3, acq4);
     ck_assert(p->used_head == acq4);
     ck_assert(p->used_head->prev == NULL);
     ck_assert(p->used_head->next == acq1);
@@ -328,7 +327,6 @@ START_TEST (socket_pool_release_test)
     ck_assert(acq4->next == NULL);
     ck_assert(acq4->prev == NULL);
     ck_assert(p->free_head == acq1);
-    printf("XXXXXXXXX 1 %p 2 %p 3 %p 4 %p p->used_head %p\n", acq1, acq2, acq3, acq4, p->used_head);
     ck_assert(p->used_head == acq4);
     ck_assert_int_eq(socket_pool_how_many_used(p), socket_pool_capacity(p) -
         socket_pool_how_many_free(p));
@@ -361,84 +359,6 @@ START_TEST (socket_pool_how_many_used_test)
     socket_pool_free(p);
 }
 END_TEST
-
-
-
-/*START_TEST (circular_buffer_enqueue_test)*/
-/*{*/
-/*    circ_buff_t* cb = NULL;*/
-/*    int size = 2;*/
-/*    cb = circ_buff_create(size);*/
-/*    ck_assert(cb != NULL);*/
-/*    ck_assert_int_eq(circ_buff_capacity(cb), size);*/
-/*    int a = 5;*/
-/*    ck_assert(circ_buff_enqueue(cb, &a) == true);*/
-/*    ck_assert_int_eq(circ_buff_how_many(cb), 1);*/
-/*    ck_assert_int_eq(cb->head, 0);*/
-/*    ck_assert_int_eq(cb->tail, (cb->present % cb->capacity));*/
-/*    circ_buff_free(cb);    */
-/*}*/
-/*END_TEST*/
-
-
-/*START_TEST (circular_buffer_enqueue_full_test)*/
-/*{*/
-/*    circ_buff_t* cb = NULL;*/
-/*    int size = 1;*/
-/*    cb = circ_buff_create(size);*/
-/*    ck_assert(cb != NULL);*/
-/*    ck_assert_int_eq(circ_buff_capacity(cb), size);*/
-/*    int a = 5;*/
-/*    ck_assert(circ_buff_enqueue(cb, &a) == true);*/
-/*    ck_assert_int_eq(circ_buff_how_many(cb), 1);*/
-/*    ck_assert_int_eq(cb->head, 0);*/
-/*    ck_assert_int_eq(cb->tail, (cb->present % cb->capacity));*/
-/*    */
-/*    ck_assert(circ_buff_enqueue(cb, &a) == false);*/
-/*    ck_assert_int_eq(circ_buff_how_many(cb), 1);*/
-/*    ck_assert_int_eq(cb->head, 0);*/
-/*    ck_assert_int_eq(cb->tail, (cb->present % cb->capacity));*/
-
-/*    circ_buff_free(cb);    */
-/*}*/
-/*END_TEST*/
-
-/*START_TEST (circular_buffer_dequeue_empty_test)*/
-/*{*/
-/*    circ_buff_t* cb = NULL;*/
-/*    int size = 5;*/
-/*    cb = circ_buff_create(size);*/
-/*    ck_assert(cb != NULL);*/
-/*    ck_assert_int_eq(circ_buff_capacity(cb), size);*/
-/*    ck_assert(circ_buff_dequeue(cb) == NULL);*/
-/*    ck_assert_int_eq(circ_buff_how_many(cb), 0);*/
-/*    circ_buff_free(cb);    */
-/*}*/
-/*END_TEST*/
-
-/*START_TEST (circular_buffer_dequeue_full_test)*/
-/*{*/
-/*    circ_buff_t* cb = NULL;*/
-/*    int size = 2;*/
-/*    int a = 4;*/
-/*    int b = 10;*/
-/*    cb = circ_buff_create(size);*/
-/*    ck_assert(cb != NULL);*/
-/*    ck_assert(circ_buff_empty(cb) == true);*/
-/*    ck_assert(circ_buff_enqueue(cb, &a) == true);*/
-/*    ck_assert(circ_buff_empty(cb) == false);*/
-/*    ck_assert(circ_buff_enqueue(cb, &b) == true);*/
-/*    ck_assert(circ_buff_empty(cb) == false);*/
-/*    ck_assert_int_eq(circ_buff_how_many(cb), circ_buff_capacity(cb));*/
-/*    ck_assert(circ_buff_dequeue(cb) == &a);*/
-/*    ck_assert_int_eq(circ_buff_how_many(cb), 1);*/
-/*    ck_assert(circ_buff_empty(cb) == false);*/
-/*    ck_assert(circ_buff_dequeue(cb) == &b);*/
-/*    ck_assert_int_eq(circ_buff_how_many(cb), 0);*/
-/*    ck_assert(circ_buff_empty(cb) == true);*/
-/*    circ_buff_free(cb);    */
-/*}*/
-/*END_TEST*/
 
 Suite *socket_pool_suite (void)
 {

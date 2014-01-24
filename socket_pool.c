@@ -12,7 +12,7 @@
 
 static bool list_insert_head(conversation_t** dst, conversation_t* node);
 static conversation_t* list_remove_head(conversation_t** lst);
-static conversation_t* list_element_unleash(conversation_t** c);
+//static conversation_t* list_element_unleash(conversation_t** c);
 
 /*! \brief Socket pool creation routine
 * 
@@ -120,7 +120,6 @@ conversation_t* socket_pool_acquire(socket_pool_t* p)
 */
 bool socket_pool_release(socket_pool_t* p, conversation_t* c)
 {
-    conversation_t* dummy;
     if(!p) {
         DEBUG_MSG("Cannot release element if pool is %p\n", p);
         return false;
@@ -130,18 +129,26 @@ bool socket_pool_release(socket_pool_t* p, conversation_t* c)
         return false;
     }
     
-    /* if element is the head of used list */
-    DEBUG_MSG("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA p->used_head = %p\n", p->used_head);
-    dummy = list_element_unleash(&c);
-    DEBUG_MSG("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB p->used_head = %p\n", p->used_head);
+    
+    if(c->prev) /* forward link of the predecessor if exists */
+        c->prev->next = c->next;
+    else /* c is the head of the list so change it */ 
+        p->used_head = c->next;
+    
+    if(c->next) /* backward link of the successor if exists */
+        c->next->prev = c->prev;
+
     p->used_count--;
-/*    if(!p->used_count) {*/
-/*        DEBUG_MSG("We have an empty p->used_head... setting ptr to NULL\n");*/
-/*        p->used_head = NULL;*/
-/*    }*/
-    list_insert_head(&p->free_head, dummy);
+
+    /* unleash current node */
+    c->prev = NULL;
+    c->next = NULL;
+
+    list_insert_head(&p->free_head, c);
     p->free_count++;
+    
     assert(p->capacity == p->used_count + p->free_count);
+    
     DEBUG_MSG("Released element %p from %p, max_count (%d == %d) "
         "used_count + free_count \n", c, p->used_head, p->capacity,
         p->used_count + p->free_count);
@@ -291,7 +298,7 @@ conversation_t* list_remove_head(conversation_t** lst)
 * Return null if the list was empty, otherwise removed element is returned
 *
 */
-
+#if 0
 conversation_t* list_element_unleash(conversation_t** c)
 {
     conversation_t* tmp = *c;
@@ -300,9 +307,7 @@ conversation_t* list_element_unleash(conversation_t** c)
         tmp->prev->next = tmp->next;
     } else {
         /* *c is the head of the list so I need to advance it */
-        DEBUG_MSG("XXXXXXXXXXXXXXXXXXXXXXXX I need to unleash the head *c = %p tmp->next = %p", *c, tmp->next);
         *c = tmp->next;
-        DEBUG_MSG("XXXXXXXXXXXXXXXXXXXXXXXX Boh eppure l'ho settato *c = %p, tmp->next = %p\n", *c, tmp->next);
     }
     /* setting backward link of the successor if exists */
     if(tmp->next)
@@ -311,5 +316,6 @@ conversation_t* list_element_unleash(conversation_t** c)
     /* unleash current node */
     tmp->prev = NULL;
     tmp->next = NULL;
-    return *c;
+    return tmp;
 }
+#endif
