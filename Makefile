@@ -1,6 +1,8 @@
 INCLUDE=.
 CC=gcc
-CFLAGS=-g -O3 -Wall -I$(INCLUDE) -DDORAYAKI_DEBUG
+CFLAGS=-g -O3 -Wall -I$(INCLUDE)
+#CFLAGS=-g -O3 -Wall -I$(INCLUDE) -DDORAYAKI_DEBUG
+
 #DIRS=. ./tests
 
 LIBS=
