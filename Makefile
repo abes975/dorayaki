@@ -9,7 +9,7 @@ LIBS=
 
 DEPS = socket_pool.h 
 
-OBJ = socket_pool.o
+OBJ = socket_pool.o udp_proxy.o
 
 %.o: %.c $(DEPS)
 	$(CC) -c -o $@ $< $(CFLAGS)
