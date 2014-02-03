@@ -12,7 +12,6 @@
 
 static bool list_insert_head(conversation_t** dst, conversation_t* node);
 static conversation_t* list_remove_head(conversation_t** lst);
-//static conversation_t* list_element_unleash(conversation_t** c);
 
 /*! \brief Socket pool creation routine
 * 
@@ -30,12 +29,14 @@ socket_pool_t* socket_pool_create(uint32_t capacity)
     int i = 0;
 
     if (!capacity)
-        FATAL_ERROR("Can't allocate a socket_pool with %d elem\n", capacity);
+        FATAL_ERROR(stderr, "Can't allocate a socket_pool with %d elem\n", capacity);
 
     pool = (socket_pool_t*) malloc(sizeof(socket_pool_t));
     if (!pool)
-        FATAL_ERROR("Can't allocate socket_pool structure\n");
+        FATAL_ERROR(stderr, "Can't allocate socket_pool structure\n");
     memset(pool, 0, sizeof(socket_pool_t));
+
+    FD_ZERO(&(pool->rd_set));
 
     // Allocating socket element
     for (i = 0; i < capacity; i++) {
@@ -43,29 +44,28 @@ socket_pool_t* socket_pool_create(uint32_t capacity)
         dummy = (conversation_t*)malloc(sizeof(conversation_t));
 
         if (!dummy)
-            FATAL_ERROR("Can't allocate a pool_conversation element\n");
+            FATAL_ERROR(stderr, "Can't allocate a pool_conversation element\n");
 
         /* zero's all structure fields, so no need to set to NULL unused ptrs */
         memset(dummy, 0, sizeof(conversation_t));
         // here's our udp socket
         dummy->sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
         if (dummy->sock_fd == -1)
-            FATAL_ERROR("Can't create socket. Errorno is %d %s\n", errno, 
+            FATAL_ERROR(stderr, "Can't create socket. Errorno is %d %s\n", errno, 
                 strerror(errno));
       
         if (pool->max_fd < dummy->sock_fd) {
             pool->max_fd = dummy->sock_fd;
-            DEBUG_MSG("New max file descriptor used is %d\n", dummy->sock_fd);
+            DEBUG_MSG(stderr, "New max file descriptor used is %d\n", dummy->sock_fd);
         }
 
         list_insert_head(&pool->free_head, dummy);
         pool->free_count++;
-
     }
     
     pool->capacity = capacity;
 
-    DEBUG_MSG("Socket pool creation finished, free_head (%p), "
+    DEBUG_MSG(stderr, "Socket pool creation finished, free_head (%p), "
         "used_head (%p), capacity (%d), free_count (%d), " 
         "used_count (%d), max_fd (%d)\n", 
         pool->free_head, pool->used_head, pool->capacity, pool->free_count, 
@@ -86,23 +86,24 @@ socket_pool_t* socket_pool_create(uint32_t capacity)
 conversation_t* socket_pool_acquire(socket_pool_t* p)
 {
     if(!p) {
-        DEBUG_MSG("Can't assign element from a %p pool\n", p);
+        DEBUG_MSG(stderr, "Can't assign element from a %p pool\n", p);
         return NULL;
     }
     if (p->used_count < p->capacity && p->free_count && p->free_head) {
-            DEBUG_MSG("Ready to assign element from pool %p\n", p);
+            DEBUG_MSG(stderr, "Ready to assign element from pool %p\n", p);
             conversation_t* node;
             if((node = list_remove_head(&p->free_head))) {
                 p->free_count--;
-                DEBUG_MSG("Node %p removed from free list, now free_list head "
+                DEBUG_MSG(stderr, "Node %p removed from free list, now free_list head "
                     "%p (free_count = %d)\n", node, p->free_head, p->free_count);
-                DEBUG_MSG("Ready to insert node %p in used_list %p\n", 
+                DEBUG_MSG(stderr, "Ready to insert node %p in used_list %p\n", 
                     node, p->used_head);
                 list_insert_head(&p->used_head, node);
                 p->used_count++;
-                DEBUG_MSG("Node %p node inserted in used list, now used list "
+                DEBUG_MSG(stderr, "Node %p node inserted in used list, now used list "
                     "head %p (used_count = %d)\n", node, p->used_head, 
                     p->used_count);
+                FD_SET(p->used_head->sock_fd, &(p->rd_set));
                 return p->used_head;
             }
     }
@@ -121,11 +122,11 @@ conversation_t* socket_pool_acquire(socket_pool_t* p)
 bool socket_pool_release(socket_pool_t* p, conversation_t* c)
 {
     if(!p) {
-        DEBUG_MSG("Cannot release element if pool is %p\n", p);
+        DEBUG_MSG(stderr, "Cannot release element if pool is %p\n", p);
         return false;
     }
     if (!c) {
-        DEBUG_MSG("Cannot released element if it's %p\n", c);
+        DEBUG_MSG(stderr, "Cannot released element if it's %p\n", c);
         return false;
     }
     
@@ -148,70 +149,127 @@ bool socket_pool_release(socket_pool_t* p, conversation_t* c)
     p->free_count++;
     
     assert(p->capacity == p->used_count + p->free_count);
-    
-    DEBUG_MSG("Released element %p from %p, max_count (%d == %d) "
+    FD_CLR(c->sock_fd, &(p->rd_set));
+    DEBUG_MSG(stderr, "Released element %p from %p, max_count (%d == %d) "
         "used_count + free_count \n", c, p->used_head, p->capacity,
         p->used_count + p->free_count);
     return true;
 }
 
-
+/*! \brief Conversation find routine
+* 
+* Given a socket descriptor it returns the conversation currently associated
+* with that socket. Null in case nothing is found!
+* The search process takes O(n) is linear in the number of the element inside
+* the list
+*
+* \param list Where to look for the element (from there to the end)
+* \param sock_fd socket descriptor we are looking for
+* \return conversation_t pointer or NULL
+*/
 conversation_t* socket_pool_find(conversation_t* list, int sock_fd)
 {
     conversation_t* dummy = list;
     while(dummy) {
         if(dummy->sock_fd == sock_fd) {
-            DEBUG_MSG("Found element at %p (%d == %d)\n", 
+            DEBUG_MSG(stderr, "Found element at %p (%d == %d)\n", 
                 dummy, dummy->sock_fd, sock_fd);
             return dummy;
         }
         dummy = dummy->next;
     }
-    DEBUG_MSG("No element found\n");
+    DEBUG_MSG(stderr, "No element found\n");
     return NULL;
 }
 
+/*! \brief get back how many element inside the pool are used
+* 
+* Given the pool pointer return the number of elements inside used_list
+*
+* \param p Pool where to look for
+* \return int numer of elements used or -1 if the pool is invalid
+*/
 int socket_pool_how_many_used(socket_pool_t* p)
 {
     if (!p) {
-        DEBUG_MSG("Pool is not valid (%p)\n", p);
+        ERROR_MSG(stderr, "Pool is not valid (%p)\n", p);
         return -1;
     }
     else
         return p->used_count;
 }
 
+/*! \brief get back how many element inside the pool are available
+* 
+* Given the pool pointer return the number of elements inside free_list
+*
+* \param p Pool where to look for
+* \return int numer of elements available or -1 if the pool is invalid
+*/
 int socket_pool_how_many_free(socket_pool_t* p)
 {
     if (!p) {
-        DEBUG_MSG("Pool is not valid (%p)\n", p);
+        ERROR_MSG(stderr, "Pool is not valid (%p)\n", p);
         return -1;
     }
     else
         return p->free_count;
 }
 
+/*! \brief get back how many conversation we can "simoultaneously" handle
+* 
+* Given the pool pointer return the maximum number of element available
+*
+* \param p Pool where to look for
+* \return the numer of maximum elements (conversation) allowed inside the pool
+* or -1 if the pool is not valid
+*/
+
 int socket_pool_capacity(socket_pool_t* p)
 {
     if (!p) {
-        DEBUG_MSG("Pool is not valid (%p)\n", p);
+        ERROR_MSG(stderr, "Pool is not valid (%p)\n", p);
         return -1;
     }
     else
         return p->capacity;
 }
 
+/*! \brief get back the maximum file descriptor used inside the pool
+* 
+* Very useful when using select call :)
+*
+* \param p Pool where to look for
+* \return the maximum file descriptor used or -1 if the pool is not valid
+*/
+int socket_pool_max_fd_used(socket_pool_t *p)
+{
+    if (!p) {
+        ERROR_MSG(stderr, "Pool is not valid (%p)\n", p);
+        return -1;
+    }
+    else
+        return p->max_fd;
+}
 
+
+/*! \brief Free memory used by pool
+* 
+* Given the pool pointer just release memory used ;)
+*
+* \param p Pool where to look for
+* \return nothing
+*/
 void socket_pool_free(socket_pool_t* p){
     int cnt = 0;    
     if (!p) {
-        DEBUG_MSG("Free invoked on a %p pool\n", p); 
+        ERROR_MSG(stderr, "Free invoked on a %p pool\n", p); 
         return;
     }
     
     conversation_t* tmp = p->free_head;
     while(cnt < p->free_count && tmp) {
-        DEBUG_MSG("Deallocating elem %d of free list\n", cnt + 1);
+        DEBUG_MSG(stderr, "Deallocating elem %d of free list\n", cnt + 1);
         tmp = p->free_head->next;
         free(p->free_head);
         p->free_head = tmp;
@@ -221,7 +279,7 @@ void socket_pool_free(socket_pool_t* p){
     tmp = p->used_head;
     cnt = 0;
     while(cnt < p->used_count && tmp) {
-        DEBUG_MSG("Deallocating elem %d of used list\n", cnt + 1);
+        DEBUG_MSG(stderr, "Deallocating elem %d of used list\n", cnt + 1);
         tmp = p->used_head->next;
         free(p->used_head);
         p->used_head = tmp;
@@ -229,11 +287,10 @@ void socket_pool_free(socket_pool_t* p){
     }
 
     free(p);
-    DEBUG_MSG("Deallocated pool structure\n");
+    DEBUG_MSG(stderr, "Deallocated pool structure\n");
     p = NULL;
     return;
 }
-
 
 /*
 *
@@ -244,9 +301,9 @@ void socket_pool_free(socket_pool_t* p){
 bool list_insert_head(conversation_t** dst, conversation_t* node)
 {
     if(!*dst) {
-        DEBUG_MSG("Head is %p\n", *dst);
+        DEBUG_MSG(stderr, "Head is %p\n", *dst);
        *dst = node;
-        DEBUG_MSG("Inserted %p as first element...now head is %p"
+        DEBUG_MSG(stderr, "Inserted %p as first element...now head is %p"
         " prev is %p next is %p\n", node, *dst, 
         (*dst)->prev, (*dst)->next);
         return false;
@@ -255,7 +312,7 @@ bool list_insert_head(conversation_t** dst, conversation_t* node)
     node->next = (*dst);
     (*dst)->prev = node;
     (*dst) = node;
-    DEBUG_MSG("Inserted %p as inside pre-existent list...head is %p"
+    DEBUG_MSG(stderr, "Inserted %p as inside pre-existent list...head is %p"
         " prev is %p next is %p\n", node, *dst, 
         (*dst)->prev, (*dst)->next);
 
@@ -273,7 +330,7 @@ conversation_t* list_remove_head(conversation_t** lst)
 {
     conversation_t* node;
     if(!*lst) {
-        DEBUG_MSG("Can't remove element from %p list\n", *lst);
+        DEBUG_MSG(stderr, "Can't remove element from %p list\n", *lst);
         return NULL;
     }
 
@@ -287,35 +344,6 @@ conversation_t* list_remove_head(conversation_t** lst)
    
     node->next = NULL;
     node->prev = NULL;
-    DEBUG_MSG("Successfull removed first element: now list head is %p\n", *lst);
+    DEBUG_MSG(stderr, "Successfull removed first element: now list head is %p\n", *lst);
     return node;
 }
-
-/*
-*
-* Remove element from whatever (not head) position of the list passed as 
-* parameter. The element c passed MUST belong to the list...:) no check is done
-* Return null if the list was empty, otherwise removed element is returned
-*
-*/
-#if 0
-conversation_t* list_element_unleash(conversation_t** c)
-{
-    conversation_t* tmp = *c;
-    /* setting the forward link of the predecessor if exists */
-    if(tmp->prev) {
-        tmp->prev->next = tmp->next;
-    } else {
-        /* *c is the head of the list so I need to advance it */
-        *c = tmp->next;
-    }
-    /* setting backward link of the successor if exists */
-    if(tmp->next)
-        tmp->next->prev = tmp->prev;
-
-    /* unleash current node */
-    tmp->prev = NULL;
-    tmp->next = NULL;
-    return tmp;
-}
-#endif
