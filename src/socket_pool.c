@@ -98,7 +98,8 @@ conversation_t* socket_pool_acquire(socket_pool_t* p)
                     "%p (free_count = %d)\n", node, p->free_head, p->free_count);
                 DEBUG_MSG(stderr, "Ready to insert node %p in used_list %p\n", 
                     node, p->used_head);
-                list_insert_head(&p->used_head, node);
+                if(!list_insert_head(&p->used_head, node))
+                    p->used_tail = node;
                 p->used_count++;
                 DEBUG_MSG(stderr, "Node %p node inserted in used list, now used list "
                     "head %p (used_count = %d)\n", node, p->used_head, 
@@ -138,6 +139,8 @@ bool socket_pool_release(socket_pool_t* p, conversation_t* c)
     
     if(c->next) /* backward link of the successor if exists */
         c->next->prev = c->prev;
+    else 
+        p->used_tail = c->prev;
 
     p->used_count--;
 

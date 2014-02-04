@@ -20,6 +20,7 @@ typedef struct conversation_t {
 typedef struct {
     conversation_t* free_head;
     conversation_t* used_head;
+    conversation_t* used_tail;
     int capacity; /*!< Number of element pre-allocated inside the list */
     int free_count; /*!< Number of valid element inside free list */
     int used_count; /*!< How many are used...pending request */

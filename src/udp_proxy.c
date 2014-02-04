@@ -1,6 +1,7 @@
 #include <netinet/in.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <stdio.h>
@@ -12,7 +13,7 @@
 #include "socket_pool.h"
 #include "debug.h"
 
-int fake_server()
+int fake_server(char* listener, char* forwarder)
 {
     socket_pool_t* pool;
     int pool_capacity = 10;
@@ -29,34 +30,47 @@ int fake_server()
     char msg[1000];
     char msg1[1000];
 
+    /* listening socket */
+    memset(&servaddr, 0, sizeof(servaddr));
+    servaddr.sin_family = AF_INET;
+
+    //servaddr.sin_addr.s_addr=htonl(INADDR_ANY);
+    servaddr.sin_port=htons(port);
+    if (inet_pton(AF_INET, listener, &servaddr.sin_addr.s_addr) != 1) {
+        perror("Cannot convert listener exiting\n");
+        exit(EXIT_FAILURE);
+    }
+
+    /* forwarding socket */
+    memset(&remservaddr, 0, sizeof(struct sockaddr_in));
+    remservaddr.sin_family = AF_INET;
+    remservaddr.sin_port = htons(53);
+    // end relay socket
+    if (inet_pton(AF_INET, forwarder, &remservaddr.sin_addr.s_addr) != 1) {
+        perror("Cannot convert forwarder exiting\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // this is the listening socket
+    sockfd=socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd == -1) {
+        perror("Cannot allocate listening socket. Exiting\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (bind(sockfd,(struct sockaddr *)&servaddr,sizeof(servaddr)) == -1) {
+        perror("Cannot complete bind...");
+        fprintf(stderr, "%s", strerror(errno));
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
 
     // proxy socket
     pool = socket_pool_create(pool_capacity);
     if (!pool) {
         perror("Socket pool is null....");
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
-    
-    // this is the listening socket
-    sockfd=socket(AF_INET, SOCK_DGRAM, 0);
-
-    memset(&servaddr, 0, sizeof(servaddr));
-    servaddr.sin_family = AF_INET;
-    inet_pton(AF_INET, "163.162.22.72", &servaddr.sin_addr.s_addr);
-    //servaddr.sin_addr.s_addr=htonl(INADDR_ANY);
-    servaddr.sin_port=htons(port);
-    
-    if (bind(sockfd,(struct sockaddr *)&servaddr,sizeof(servaddr))) {
-        perror("Cannot complete bind...maybe socket already in use or maybe you're not root :)");
-        close(sockfd);
-    }
-    
-    // Relay socket part
-    memset(&remservaddr, 0, sizeof(struct sockaddr_in));
-    remservaddr.sin_family = AF_INET;
-    remservaddr.sin_port = htons(53);
-    inet_pton(AF_INET, "8.8.8.8", &remservaddr.sin_addr.s_addr);
-    // end relay socket
 
     FD_ZERO(&rd_set);
     maxfd = (sockfd > socket_pool_max_fd_used(pool)) ? sockfd + 1: socket_pool_max_fd_used(pool) + 1;
@@ -67,11 +81,26 @@ int fake_server()
         rd_set = pool->rd_set;
         FD_SET(sockfd, &rd_set);
         int i;
+        int ret = 0;
         char straddr[INET_ADDRSTRLEN];
-        if (select(maxfd, &rd_set, NULL, NULL, NULL) == -1) {
+        struct timeval timeout;
+        
+        timeout.tv_sec = 5;
+        timeout.tv_usec = 0;
+        
+        if ((ret = select(maxfd, &rd_set, NULL, NULL, &timeout)) == -1) {
             ERROR_MSG(stderr, "Select returned -1 (%s)\n", strerror(errno));
             exit(EXIT_FAILURE);
+        } else if (!ret) { // timeout ;-)
+            ERROR_MSG(stderr, "Timeout\n");
+            if (socket_pool_how_many_used(pool) == socket_pool_capacity(pool)) {
+                ERROR_MSG(stderr, "Cancello un pezzo\n");
+                socket_pool_release(pool, pool->used_tail);
+                ERROR_MSG(stderr, "Ora ho %d elementi usati\n", socket_pool_how_many_used(pool));
+            }
+            continue;
         }
+        
         // we have a new request from attackers ;-)
         if (FD_ISSET(sockfd, &rd_set)) {
             conversation_t* proxy = socket_pool_acquire(pool);
@@ -128,7 +157,11 @@ int fake_server()
 
 int main(int argc, char** argv)
 {
-    fake_server();
+    if (argc < 3) {
+        FATAL_ERROR(stderr, "\nPlease run with %s <listen address> <forward address>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+    fake_server(argv[1], argv[2]);
     return 1;
 }
 
