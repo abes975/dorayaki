@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#include "../socket_pool.h"
+#include "socket_pool.h"
 
 START_TEST (socket_pool_create_1_elem_test)
 {
