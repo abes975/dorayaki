@@ -1,3 +1,4 @@
+dorayaki
 Makefile
 Makefile.in
 .deps/
@@ -13,11 +14,15 @@ configure
 depcomp
 install-sh
 missing
+stamp-h1
 src/Makefile
 src/Makefile.in
 src/.deps/
-stamp-h1
+src/*.o
+tests/*.o
 tests/Makefile
 tests/Makefile.in
 tests/.deps/
 tests/.dirstamp
+tests/*.o
+tests/socket_pool_test
