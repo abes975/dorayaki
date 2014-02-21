@@ -3,4 +3,4 @@ AM_LDFLAGS= -pthread
 
 bin_PROGRAMS = dorayaki
 dorayaki_SOURCES =  socket_pool.h socket_pool.c \
-                    multi_udp_proxy.c 
+                    udp_proxy.c 
