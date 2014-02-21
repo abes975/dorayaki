@@ -1,1 +1,39 @@
 どら焼きが大好きだよ
+
+Main
+    Crea socket udp 53
+    Crea socket tcp 53
+    fork
+        figli
+            crea pool udp
+            crea pool tcp
+            select loop
+                se udp read from clients
+                    acquisisce elemento pool
+                    wait(read_udp)
+                        legge datagram
+                    signal(read_udp)
+                    *statistiche UDP*
+                    spedisce
+                se tcp read from clients
+                    wait(read_tcp)
+                        accept()
+                    signal(read_tcp)
+                    inserisce_descrittore_nel_set e lo salva nel pool per rispedire risposta
+                se richiesta da client tcp
+                    legge_stream (tutta la richiesta)
+                    *statistiche TCP*
+                    spedisce
+                se risposta da google udp
+                    while (fd_set)                    
+                        legge datagram
+                        *statistiche UDP ANSWER*
+                        wait(write_udp)
+                            spedisce risposta
+                        signal(write_udp)
+                se risposta da google tcp
+                    legge_stream
+                    *statistiche TCP ANSWER*
+                    spedisce risposta su descrittore recuperato dal pool? tabella?
+        padre
+            Per ora non fa una mazza...poi sarà il manager :)
