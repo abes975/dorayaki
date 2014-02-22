@@ -1,5 +1,5 @@
-#ifndef __DORAYAKI_SOCK_POOL__
-#define __DORAYAKI_SOCK_POOL__
+#ifndef __DORAYAKI_SOCKET_POOL__
+#define __DORAYAKI_SOCKET_POOL__
 
 #include <stdint.h>
 #include <stdbool.h>

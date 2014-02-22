@@ -13,10 +13,10 @@
 #endif
 
 
-#define FATAL_ERROR(fd, fmt, ...) \
+#define FATAL_ERROR(fd, retcode, fmt, ...) \
     {\
         fprintf(fd, "[FATAL ERROR] (%s: %s: %d): " fmt "\n", __FILE__, __func__, __LINE__, ##__VA_ARGS__); \
-        exit(-2); \
+        exit(retcode); \
     }
 
 

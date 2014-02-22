@@ -29,11 +29,11 @@ socket_pool_t* socket_pool_create(uint32_t capacity)
     int i = 0;
 
     if (!capacity)
-        FATAL_ERROR(stderr, "Can't allocate a socket_pool with %d elem\n", capacity);
+        FATAL_ERROR(stderr, EXIT_FAILURE, "Can't allocate a socket_pool with %d elem\n", capacity);
 
     pool = (socket_pool_t*) malloc(sizeof(socket_pool_t));
     if (!pool)
-        FATAL_ERROR(stderr, "Can't allocate socket_pool structure\n");
+        FATAL_ERROR(stderr, EXIT_FAILURE, "Can't allocate socket_pool structure\n");
     memset(pool, 0, sizeof(socket_pool_t));
 
     FD_ZERO(&(pool->rd_set));
@@ -44,14 +44,14 @@ socket_pool_t* socket_pool_create(uint32_t capacity)
         dummy = (conversation_t*)malloc(sizeof(conversation_t));
 
         if (!dummy)
-            FATAL_ERROR(stderr, "Can't allocate a pool_conversation element\n");
+            FATAL_ERROR(stderr, EXIT_FAILURE, "Can't allocate a pool_conversation element\n");
 
         /* zero's all structure fields, so no need to set to NULL unused ptrs */
         memset(dummy, 0, sizeof(conversation_t));
         // here's our udp socket
         dummy->sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
         if (dummy->sock_fd == -1)
-            FATAL_ERROR(stderr, "Can't create socket. Errorno is %d %s\n", errno, 
+            FATAL_ERROR(stderr, EXIT_FAILURE, "Can't create socket. Errorno is %d %s\n", errno, 
                 strerror(errno));
       
         if (pool->max_fd < dummy->sock_fd) {
