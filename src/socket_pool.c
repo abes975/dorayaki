@@ -16,20 +16,24 @@ static conversation_t* list_remove_head(conversation_t** lst);
 /*! \brief Socket pool creation routine
 * 
 * A socket pool consisting of a linked list of capacity is allocated in this
-* procedure. For each element a datagram socket is created in order to be used.
-* In case of catastrophic problems (i.e. failed allocation, socket call failed
+* procedure. For each element a SOCK_DGRAM or pair of SOCK_STREAM sockets are 
+* created in order to be used.
+* Catastrophic problems (i.e. failed allocation, socket call failed)
 * will lead to program termination).
 *
 * \param capacity Maximum number of pre-allocated element
+* \param istcp boolean to decide wheater create STREAM or DGRAM sockets
 * \return socket_pool_t pointer
 */
-socket_pool_t* socket_pool_create(uint32_t capacity)
+socket_pool_t* socket_pool_create(uint32_t capacity, bool istcp)
 {
     socket_pool_t* pool = NULL;
     int i = 0;
+    int tmp_sock;
 
     if (!capacity)
-        FATAL_ERROR(stderr, EXIT_FAILURE, "Can't allocate a socket_pool with %d elem\n", capacity);
+        FATAL_ERROR(stderr, EXIT_FAILURE, "Can't allocate a socket_pool"
+        " with %d elem\n", capacity);
 
     pool = (socket_pool_t*) malloc(sizeof(socket_pool_t));
     if (!pool)
@@ -49,14 +53,28 @@ socket_pool_t* socket_pool_create(uint32_t capacity)
         /* zero's all structure fields, so no need to set to NULL unused ptrs */
         memset(dummy, 0, sizeof(conversation_t));
         // here's our udp socket
-        dummy->sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
-        if (dummy->sock_fd == -1)
-            FATAL_ERROR(stderr, EXIT_FAILURE, "Can't create socket. Errorno is %d %s\n", errno, 
-                strerror(errno));
+        if (!istcp) {
+            dummy->loc_sock = socket(AF_INET, SOCK_DGRAM, 0);
+            dummy->rem_sock = socket(AF_INET, SOCK_DGRAM, 0);
+            if ((dummy->loc_sock == -1) || (dummy->rem_sock == -1))
+                FATAL_ERROR(stderr, EXIT_FAILURE, "Can't create UDP socket."
+                " (loc_sock =%d, rem_sock= %d). Errorno is %d %s\n", 
+                dummy->loc_sock, dummy->rem_sock, errno, strerror(errno));
+        } else {
+            dummy->loc_sock = socket(AF_INET, SOCK_STREAM, 0);
+            dummy->rem_sock = socket(AF_INET, SOCK_STREAM, 0);
+            if ((dummy->loc_sock == -1) || (dummy->rem_sock == - 1))
+                FATAL_ERROR(stderr, EXIT_FAILURE, "Can't create TCP sockets" 
+                " (loc_sock =%d, rem_sock= %d). Errorno is %d %s\n", 
+                dummy->loc_sock, dummy->rem_sock, errno, strerror(errno));
+        }
       
-        if (pool->max_fd < dummy->sock_fd) {
-            pool->max_fd = dummy->sock_fd;
-            DEBUG_MSG(stderr, "New max file descriptor used is %d\n", dummy->sock_fd);
+        tmp_sock = dummy->loc_sock > dummy->rem_sock ? 
+            dummy->loc_sock : dummy->rem_sock;
+        if (pool->max_fd < tmp_sock) {
+            pool->max_fd = tmp_sock;
+            DEBUG_MSG(stderr, "New max file descriptor used is %d\n", 
+                pool->max_fd);
         }
 
         list_insert_head(&pool->free_head, dummy);
@@ -65,9 +83,9 @@ socket_pool_t* socket_pool_create(uint32_t capacity)
     
     pool->capacity = capacity;
 
-    DEBUG_MSG(stderr, "Socket pool creation finished, free_head (%p), "
+    DEBUG_MSG(stderr, "Socket pool (%s) creation finished, free_head (%p), "
         "used_head (%p), capacity (%d), free_count (%d), " 
-        "used_count (%d), max_fd (%d)\n", 
+        "used_count (%d), max_fd (%d)\n", (istcp == 1) ? "TCP" : "UDP",
         pool->free_head, pool->used_head, pool->capacity, pool->free_count, 
         pool->used_count, pool->max_fd);
 
@@ -94,17 +112,20 @@ conversation_t* socket_pool_acquire(socket_pool_t* p)
             conversation_t* node;
             if((node = list_remove_head(&p->free_head))) {
                 p->free_count--;
-                DEBUG_MSG(stderr, "Node %p removed from free list, now free_list head "
-                    "%p (free_count = %d)\n", node, p->free_head, p->free_count);
+                DEBUG_MSG(stderr, "Node %p removed from free list, now "
+                    "free_list head %p (free_count = %d)\n", 
+                    node, p->free_head, p->free_count);
                 DEBUG_MSG(stderr, "Ready to insert node %p in used_list %p\n", 
                     node, p->used_head);
                 if(!list_insert_head(&p->used_head, node))
                     p->used_tail = node;
                 p->used_count++;
-                DEBUG_MSG(stderr, "Node %p node inserted in used list, now used list "
-                    "head %p (used_count = %d)\n", node, p->used_head, 
-                    p->used_count);
-                FD_SET(p->used_head->sock_fd, &(p->rd_set));
+                DEBUG_MSG(stderr, "Node %p node inserted in used list, now"
+                    " used list head %p (used_count = %d)\n", node, 
+                    p->used_head, p->used_count);
+                FD_SET(p->used_head->loc_sock, &(p->rd_set));
+                if(p->used_head->rem_sock)
+                    FD_SET(p->used_head->rem_sock, &(p->rd_set));
                 return p->used_head;
             }
     }
@@ -152,7 +173,9 @@ bool socket_pool_release(socket_pool_t* p, conversation_t* c)
     p->free_count++;
     
     assert(p->capacity == p->used_count + p->free_count);
-    FD_CLR(c->sock_fd, &(p->rd_set));
+    FD_CLR(c->loc_sock, &(p->rd_set));
+    if(c->rem_sock)
+        FD_CLR(c->rem_sock, &(p->rd_set));
     DEBUG_MSG(stderr, "Released element %p from %p, max_count (%d == %d) "
         "used_count + free_count \n", c, p->used_head, p->capacity,
         p->used_count + p->free_count);
@@ -174,9 +197,9 @@ conversation_t* socket_pool_find(conversation_t* list, int sock_fd)
 {
     conversation_t* dummy = list;
     while(dummy) {
-        if(dummy->sock_fd == sock_fd) {
+        if(dummy->loc_sock == sock_fd) {
             DEBUG_MSG(stderr, "Found element at %p (%d == %d)\n", 
-                dummy, dummy->sock_fd, sock_fd);
+                dummy, dummy->loc_sock, sock_fd);
             return dummy;
         }
         dummy = dummy->next;
