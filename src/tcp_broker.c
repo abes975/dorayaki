@@ -18,16 +18,25 @@
 #include "socket_pool.h"
 #include "tcp_broker.h"
 
-/*! \brief Create a listening tcp socket and return file descriptor
+extern volatile sig_atomic_t keep_going;
+
+/*! \brief Create a listening tcp socket on port 53
 * 
 * \param broker data structure to save all useful parameters
+* \param sock share listening TCP socket
 * \param listener IP where listen to
 * \param target IP where we will proxy packet to
-* \return the listening socket's file descriptor or -1 if something was wrong
+* \return EXIT_FAILURE in case of failure or EXIT_SUCCESS :)
 */
-int tcp_broker_listener(tcp_broker_t* br, char* listener, char* target)
+int tcp_broker_initialize(tcp_broker_t* br, int how_many, 
+    char* listen_addr, char* target_addr)
 {
-    br->listen_sock = -1;
+    memset(br, 0, sizeof(tcp_broker_t));
+    br->pool = socket_pool_create(how_many, false);
+    if(!br->pool) {
+        ERROR_MSG(stderr, "Cannot allocate udp socket pool\n");
+        return EXIT_FAILURE;
+    }
     /* FIX ME...maybe we will change hereafter...now listening port is fixed */
     int port = 53;
 
@@ -35,36 +44,36 @@ int tcp_broker_listener(tcp_broker_t* br, char* listener, char* target)
     br->loc_srv.sin_family = AF_INET;
     br->loc_srv.sin_port=htons(port);
   
-    if(!listener) {
-        ERROR_MSG(stderr, "Listener is null (%p)", listener);
-        return -1;
+    if(!listen_addr) {
+        ERROR_MSG(stderr, "Listener is null (%p)", listen_addr);
+        return EXIT_FAILURE;
     }
 
-    if (inet_pton(AF_INET, listener, &(br->loc_srv.sin_addr.s_addr)) != 1) {
+    if (inet_pton(AF_INET, listen_addr, &(br->loc_srv.sin_addr.s_addr)) != 1) {
         ERROR_MSG(stderr, "Cannot convert listener (%s) into a valid IPv4 "
-            "address\n", listener);
-        return -1;
+            "address\n", listen_addr);
+        return EXIT_FAILURE;
     }
 
     /* save forward remote server address*/
     br->rem_srv.sin_family = AF_INET;
     br->rem_srv.sin_port=htons(port);
 
-    if (!target) {
-        ERROR_MSG(stderr, "Forward target is null (%p)", target);
-        return -1;
+    if (!target_addr) {
+        ERROR_MSG(stderr, "Forward target is null (%p)", target_addr);
+        return EXIT_FAILURE;
     }
 
-    if (inet_pton(AF_INET, target, &br->rem_srv.sin_addr.s_addr) != 1) {
+    if (inet_pton(AF_INET, target_addr, &br->rem_srv.sin_addr.s_addr) != 1) {
         ERROR_MSG(stderr, "Cannot convert forwarder (%s) into a valid IPv4 "
-            "address\n", target);
+            "address\n", target_addr);
     }
 
     /* this is the listening server (local) socket */
     br->listen_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (br->listen_sock == -1) {
         ERROR_MSG(stderr, "Cannot allocate listening socket\n");
-        return -1;
+        return EXIT_FAILURE;
     }
 
     if (bind(br->listen_sock, (struct sockaddr *)&(br->loc_srv), 
@@ -72,22 +81,28 @@ int tcp_broker_listener(tcp_broker_t* br, char* listener, char* target)
             ERROR_MSG(stderr, "Cannot complete bind...errno %d (%s)", errno, 
                 strerror(errno));
             close(br->listen_sock);
-            return -1;
+            return EXIT_FAILURE;
     }
 
-    return br->listen_sock;
+    return EXIT_SUCCESS;
 }
 
-
-int tcp_broker_create(tcp_broker_t* br, int how_many)
+/*! \brief Dispatch TCP packets coming from "evil" hackers and forward
+* 
+* \param sock share listening TCP socket
+* \param listen_addr is the listening ip address
+* \param target_addr is where we forward received packets
+* \param how_many how many request can we have pending simultaneously...
+* \return EXIT_FAILURE in case of failure or EXIT_SUCCESS :)
+*/
+int tcp_fake_dns(tcp_broker_t* br)
 {
-    memset(br, 0, sizeof(tcp_broker_t));
-    if(!br->pool)
-        br->pool = socket_pool_create(how_many, true);
-    if(!br->pool) {
-        ERROR_MSG(stderr, "Cannot allocate tcp socket pool\n");
-        return EXIT_FAILURE;
-    }
+    pid_t pid;
 
+    pid = getpid();
+    while(keep_going) {
+        INFO_MSG(stderr, "Child %d:%p I'the TCP child running\n", pid, br)
+        sleep(10);
+    }
     return EXIT_SUCCESS;
 }

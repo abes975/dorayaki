@@ -10,6 +10,8 @@ typedef struct tcp_broker {
     struct sockaddr_in rem_srv; /*!< Where are we sending our packets...*/
 } tcp_broker_t;
 
-int tcp_broker_listener(tcp_broker_t* broker, char* listener, char* target);
-int tcp_broker_create(tcp_broker_t* broker, int how_many);
+//int tcp_fake_dns(int sock, char* listen_addr, char* target_addr, int how_many);
+int tcp_fake_dns(tcp_broker_t* br);
+int tcp_broker_initialize(tcp_broker_t* broker, int how_many, 
+    char* listen_addr, char* target_addr);
 #endif

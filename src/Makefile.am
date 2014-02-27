@@ -1,4 +1,5 @@
-AM_CFLAGS = -g -O3 -Wall -Werror -DDORAYAKI_DEBUG
+#AM_CFLAGS = -g -O3 -Wall -Werror -DDORAYAKI_DEBUG
+AM_CFLAGS = -g -O3 -Wall -Werror
 AM_LDFLAGS= -pthread
 
 bin_PROGRAMS = dorayaki

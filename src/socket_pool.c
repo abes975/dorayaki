@@ -297,6 +297,8 @@ void socket_pool_free(socket_pool_t* p){
     while(cnt < p->free_count && tmp) {
         DEBUG_MSG(stderr, "Deallocating elem %d of free list\n", cnt + 1);
         tmp = p->free_head->next;
+        close(p->free_head->loc_sock);
+        close(p->free_head->rem_sock);
         free(p->free_head);
         p->free_head = tmp;
         cnt++;
@@ -307,6 +309,8 @@ void socket_pool_free(socket_pool_t* p){
     while(cnt < p->used_count && tmp) {
         DEBUG_MSG(stderr, "Deallocating elem %d of used list\n", cnt + 1);
         tmp = p->used_head->next;
+        close(p->used_head->loc_sock);
+        close(p->used_head->rem_sock);
         free(p->used_head);
         p->used_head = tmp;
         cnt++;

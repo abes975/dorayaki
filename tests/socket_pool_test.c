@@ -8,7 +8,23 @@ START_TEST (socket_pool_create_1_elem_test)
 {
     socket_pool_t* p = NULL;
     int size = 1;
-    p = socket_pool_create(size);
+    p = socket_pool_create(size, false);
+    ck_assert(p != NULL);
+    ck_assert_int_eq(socket_pool_capacity(p), size);
+    ck_assert_int_eq(socket_pool_how_many_free(p), size);
+    ck_assert_int_eq(socket_pool_how_many_free(p), socket_pool_capacity(p) - 
+        socket_pool_how_many_used(p));
+    ck_assert_int_eq(socket_pool_how_many_used(p), socket_pool_capacity(p) - 
+        socket_pool_how_many_free(p));
+    socket_pool_free(p);
+}
+END_TEST
+
+START_TEST (socket_pool_create_1_elem_tcp_test)
+{
+    socket_pool_t* p = NULL;
+    int size = 1;
+    p = socket_pool_create(size, true);
     ck_assert(p != NULL);
     ck_assert_int_eq(socket_pool_capacity(p), size);
     ck_assert_int_eq(socket_pool_how_many_free(p), size);
@@ -24,7 +40,7 @@ START_TEST (socket_pool_create_3_elem_test)
 {
     socket_pool_t* p = NULL;
     int size = 3;
-    p = socket_pool_create(size);
+    p = socket_pool_create(size, false);
     ck_assert(p != NULL);
     ck_assert_int_eq(socket_pool_capacity(p), size);
     ck_assert_int_eq(socket_pool_how_many_free(p), size);
@@ -42,7 +58,7 @@ START_TEST (socket_pool_acquire_test)
     conversation_t* c1, *c2, *c3;
     int size = 3;    
     ck_assert_int_eq(socket_pool_how_many_used(p), -1);
-    p = socket_pool_create(size);
+    p = socket_pool_create(size, false);
     ck_assert_int_eq(socket_pool_how_many_used(p), socket_pool_capacity(p) -
         socket_pool_how_many_free(p));
     c1 = socket_pool_acquire(p);
@@ -86,7 +102,7 @@ START_TEST (socket_pool_release_test)
     conversation_t* rel1, *rel2, *rel3, *rel4;
     bool res;
     int size = 4;    
-    p = socket_pool_create(size);
+    p = socket_pool_create(size, false);
     /* 
     *   This is not a proper test...but it's the only way to see what static
     *   function does unless I removed static with some conditional compilation
@@ -341,7 +357,7 @@ START_TEST (socket_pool_how_many_free_test)
     socket_pool_t* p = NULL;
     int size = 1;    
     ck_assert_int_eq(socket_pool_how_many_free(p), -1);
-    p = socket_pool_create(size);
+    p = socket_pool_create(size, false);
     ck_assert_int_eq(socket_pool_how_many_free(p), size);
     socket_pool_free(p);
 }
@@ -352,7 +368,7 @@ START_TEST (socket_pool_how_many_used_test)
     socket_pool_t* p = NULL;
     int size = 1;    
     ck_assert_int_eq(socket_pool_how_many_used(p), -1);
-    p = socket_pool_create(size);
+    p = socket_pool_create(size, false);
     ck_assert_int_eq(socket_pool_how_many_used(p), 0);
     socket_pool_acquire(p);
     ck_assert_int_eq(socket_pool_how_many_used(p), 1);
@@ -372,6 +388,7 @@ Suite *socket_pool_suite (void)
   tcase_add_test(tc_core, socket_pool_release_test);
   tcase_add_test(tc_core, socket_pool_how_many_free_test);
   tcase_add_test(tc_core, socket_pool_how_many_used_test);
+  tcase_add_test(tc_core, socket_pool_create_1_elem_tcp_test);
   suite_add_tcase(s, tc_core);
 
   return s;
