@@ -61,12 +61,21 @@ socket_pool_t* socket_pool_create(uint32_t capacity, bool istcp)
                 " (loc_sock =%d, rem_sock= %d). Errorno is %d %s\n", 
                 dummy->loc_sock, dummy->rem_sock, errno, strerror(errno));
         } else {
-            dummy->loc_sock = socket(AF_INET, SOCK_STREAM, 0);
+            // accept will create it...
+            //dummy->loc_sock = socket(AF_INET, SOCK_STREAM, 0);
             dummy->rem_sock = socket(AF_INET, SOCK_STREAM, 0);
             if ((dummy->loc_sock == -1) || (dummy->rem_sock == - 1))
                 FATAL_ERROR(stderr, EXIT_FAILURE, "Can't create TCP sockets" 
                 " (loc_sock =%d, rem_sock= %d). Errorno is %d %s\n", 
                 dummy->loc_sock, dummy->rem_sock, errno, strerror(errno));
+            /* we need also to allocate buffer for data in TCP...
+             * we pre-allocate it to be 2^16 bytes...waste of memory but we will
+             * do optimization later
+            */
+            dummy->buff = (uint8_t*)malloc((2 << 16) * sizeof(uint8_t));
+            if (!dummy->buff)
+                FATAL_ERROR(stderr, EXIT_FAILURE, "Can't allocate buffer for" 
+                "TCP data");
         }
       
         tmp_sock = dummy->loc_sock > dummy->rem_sock ? 
@@ -123,7 +132,8 @@ conversation_t* socket_pool_acquire(socket_pool_t* p)
                 DEBUG_MSG(stderr, "Node %p node inserted in used list, now"
                     " used list head %p (used_count = %d)\n", node, 
                     p->used_head, p->used_count);
-                FD_SET(p->used_head->loc_sock, &(p->rd_set));
+                if(p->used_head->loc_sock)
+                    FD_SET(p->used_head->loc_sock, &(p->rd_set));
                 if(p->used_head->rem_sock)
                     FD_SET(p->used_head->rem_sock, &(p->rd_set));
                 return p->used_head;
@@ -173,9 +183,12 @@ bool socket_pool_release(socket_pool_t* p, conversation_t* c)
     p->free_count++;
     
     assert(p->capacity == p->used_count + p->free_count);
-    FD_CLR(c->loc_sock, &(p->rd_set));
+    if(c->loc_sock)
+        FD_CLR(c->loc_sock, &(p->rd_set));
     if(c->rem_sock)
         FD_CLR(c->rem_sock, &(p->rd_set));
+    if(c->rcv_bytes) /* TCP case only */
+        c->rcv_bytes = 0;
     DEBUG_MSG(stderr, "Released element %p from %p, max_count (%d == %d) "
         "used_count + free_count \n", c, p->used_head, p->capacity,
         p->used_count + p->free_count);
@@ -299,6 +312,8 @@ void socket_pool_free(socket_pool_t* p){
         tmp = p->free_head->next;
         close(p->free_head->loc_sock);
         close(p->free_head->rem_sock);
+        if (p->free_head->buff)
+            free(p->free_head->buff);
         free(p->free_head);
         p->free_head = tmp;
         cnt++;
@@ -311,6 +326,8 @@ void socket_pool_free(socket_pool_t* p){
         tmp = p->used_head->next;
         close(p->used_head->loc_sock);
         close(p->used_head->rem_sock);
+        if (p->used_head->buff)
+            free(p->used_head->buff);
         free(p->used_head);
         p->used_head = tmp;
         cnt++;

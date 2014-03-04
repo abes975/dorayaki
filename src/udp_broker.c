@@ -91,10 +91,7 @@ int udp_broker_initialize(udp_broker_t* br, int how_many,
 
 /*! \brief Dispatch UDP packets coming from "evil" hackers and forward
 *
-* \param sock is the shared listening sock
-* \param listen_addr is the listening ip address
-* \param target_addr is where we forward received packets
-* \param how_many how many request can we have pending simultaneously...
+* \param br is the udb broker instance we would like to use :)
 * \return EXIT_FAILURE in case of failure or EXIT_SUCCESS :)
 */
 int udp_fake_dns(udp_broker_t* br)
@@ -119,7 +116,7 @@ int udp_fake_dns(udp_broker_t* br)
 #endif
     pid = getpid();
     
-    /* This part is here to be used with selec...if epool will be used..
+    /* This part is here to be used with select...what if epool is used..
     *   Probaly will be removed soon ;-)
     */
     FD_ZERO(&rd_set);
@@ -148,11 +145,11 @@ int udp_fake_dns(udp_broker_t* br)
                     errno, strerror(errno));
                 return EXIT_FAILURE;
             }
-        } else if (!ret) { // timeout ;-)
+        } else if (!ret) {
             /* timeout ;-) */
             ERROR_MSG(stderr, "Timeout from child %d consecutive timeouts %u\n",
                  pid, tmouts);
-            // FIX ME THERE IS A BUG HERE WITH TIMEOUTS
+            // FIX ME THERE IS A BUG HERE WITH TIMEOUTS (BUT I DON'T REMEMEBER IT NOW)
             if (socket_pool_how_many_used(br->pool) == 
                 (socket_pool_capacity(br->pool) - 
                 (tmouts % socket_pool_capacity(br->pool)))) {
@@ -178,13 +175,15 @@ int udp_fake_dns(udp_broker_t* br)
             if (proxy) {
                 //now relay traffic
                 len = sizeof(proxy->enemy_addr);
-                //fprintf(stderr, "Child %d want to read...\n", pid);
+
+                //fprintf(stderr, "Child %d wants to read...\n", pid);
                 //sem_wait(&read_sem);
                 //fprintf(stderr, "\tChild %d entered read critical section...\n", pid);
                 rcv_bytes = recvfrom(br->listen_sock, req, MAX_DNS_UDP, 0, 
                     (struct sockaddr *)&(proxy->enemy_addr), &len);
                 //fprintf(stderr, "\tChild %d finished read critical section...\n", pid);
                 //sem_post(&read_sem);
+
                 DEBUG_MSG(stderr, "Child %d finished read section" 
                     "...received data from %s\n", pid,
                     inet_ntop(AF_INET, &(proxy->enemy_addr.sin_addr), 
@@ -271,7 +270,7 @@ int udp_fake_dns(udp_broker_t* br)
                 } 
                 DEBUG_MSG(stderr, "Child %d: Successfull relayed %d bytes "
                     "to %s\n", pid, sent_bytes, 
-                    inet_ntop(AF_INET, &(br->rem_srv.sin_addr), 
+                    inet_ntop(AF_INET, &(elem->enemy_addr.sin_addr), 
                     straddr, INET_ADDRSTRLEN))
                
                 socket_pool_release(br->pool, elem);

@@ -18,8 +18,8 @@
 #include "udp_broker.h"
 #include "tcp_broker.h"
 
-#define WORKER_UDP 10
-#define WORKER_TCP 2
+#define WORKER_UDP 0
+#define WORKER_TCP 1
 
 #define PER_WORKER_UDP_CAPACITY 10
 #define PER_WORKER_TCP_CAPACITY 2
@@ -50,6 +50,7 @@ int main(int argc, char** argv)
     res = tcp_broker_initialize(&tcpb, PER_WORKER_TCP_CAPACITY, argv[1], argv[2]);
     if (res == EXIT_FAILURE)
         FATAL_ERROR(stderr, EXIT_FAILURE, "Error while initializing tcp_broker\n");
+
     /* do some fish and bread multiplication ;- */
     mitosis(WORKER_UDP, WORKER_TCP, &udpb, &tcpb);
     close(udpb.listen_sock);
@@ -92,7 +93,7 @@ int mitosis(int worker_udp, int worker_tcp, udp_broker_t* udpb, tcp_broker_t* tc
             FATAL_ERROR(stderr, EXIT_FAILURE, "Cannot complete fork"
                 " for UDP child (%d). Exiting\n", i);
         } else if (udp_cpid[i] == 0) {
-            INFO_MSG(stderr, "I'm the UDP son %d...Faithfull and ready to serve "
+            INFO_MSG(stderr, "I'm the UDP son %d...Faithful and ready to serve "
                 "you...:(\n", getpid());
             udp_fake_dns(udpb);
             return EXIT_SUCCESS;
@@ -104,7 +105,7 @@ int mitosis(int worker_udp, int worker_tcp, udp_broker_t* udpb, tcp_broker_t* tc
             FATAL_ERROR(stderr, EXIT_FAILURE, "Cannot complete fork"
                 " for TCP child (%d). Exiting\n", i);
         } else if (tcp_cpid[i] == 0) {
-            INFO_MSG(stderr, "I'm the TCP son %d...Faithfull and ready to serve "
+            INFO_MSG(stderr, "I'm the TCP son %d...Faithful and ready to serve "
                 "you...:(\n", getpid());
             tcp_fake_dns(tcpb);
             return EXIT_SUCCESS;
