@@ -23,6 +23,11 @@
 #define MAX_DNS_TCP 2 << 16
 
 extern volatile sig_atomic_t keep_going;
+pid_t pid;
+
+
+static int handle_outside_requests(conversation_t* c);
+static int forward_messages(tcp_broker_t* br, conversation_t* c);
 
 /*! \brief Create a listening tcp socket on port 53
 * 
@@ -105,7 +110,6 @@ int tcp_broker_initialize(tcp_broker_t* br, int how_many,
 */
 int tcp_fake_dns(tcp_broker_t* br)
 {
-    pid_t pid;
     /* number of consecutive timeouts in order to clean used queue */
     uint32_t tmouts = 0;
     int max_fd = -1;
@@ -114,7 +118,9 @@ int tcp_fake_dns(tcp_broker_t* br)
     socklen_t len;
     ssize_t sent_bytes = 0, rcv_bytes = 0;
 
+#ifdef DORAYAKI_DEBUG
     char straddr[INET_ADDRSTRLEN];
+#endif
 
     pid = getpid();
    
@@ -130,8 +136,6 @@ int tcp_fake_dns(tcp_broker_t* br)
          br->listen_sock + 1: socket_pool_max_fd_used(br->pool) + 1;
 
     while(keep_going) {
-
-        int i;
         int ret = 0;
         
         timeout.tv_sec = 5;
@@ -175,8 +179,7 @@ int tcp_fake_dns(tcp_broker_t* br)
         if (FD_ISSET(br->listen_sock, &rd_set)) {
             conversation_t* proxy = socket_pool_acquire(br->pool);
             if (proxy) {
-                //int flags;
-                //now relay traffic
+                //now handle incoming connection traffic
                 len = sizeof(proxy->enemy_addr);
 
                 //fprintf(stderr, "TCP Child %d wants to read...\n", pid);
@@ -193,114 +196,58 @@ int tcp_fake_dns(tcp_broker_t* br)
                     continue;
                 } 
 
-                // FIX ME (DO SOME CHECKS HERE)
-                //flags = fcntl(proxy->loc_sock, F_GETFL, 0);
-                //fcntl(proxy->loc_sock, F_SETFL, flags | O_NONBLOCK);
-
                 DEBUG_MSG(stderr, "TCP Child %d, got a connection from %s\n",
                     inet_ntop(AF_INET, (struct sockaddr_in*)
                     &(proxy->enemy_addr.sin_addr),straddr, INET_ADDRSTRLEN));
                 //fprintf(stderr, "\tChild %d finished read critical section...\n", pid);
                 //sem_post(&read_sem);
-                
-
-                /* we will try to read as much as we can...when we return from
-                * read we will check what we have and decide what to do here
-                */
-                if ((proxy->rcv_bytes = recv(proxy->loc_sock, &proxy->buff[proxy->rcv_bytes], 
-                    MAX_DNS_TCP, MSG_DONTWAIT)) == -1) {
-                    /* something went wrong...shouldn't be actually */
-                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                        ERROR_MSG(stderr, "TCP Child %d, can't read any " 
-                            "available data from socket %d...strange as we had "
-                            "been notified data were available", pid, 
-                            proxy->loc_sock);
-                        continue;
-                    } else {
-                        /* some other error occurred...gbye evil hacker */
-                        /* release all the resources */
-                        socket_pool_release(br->pool, proxy);
-                        continue;
-                    }
-                } 
-                /* we did not get an error from recv ...
-                 * let's check how many bytes we read if we have less than 2 bytes
-                 * or not complete DNS packet len  put socket in rd_set */
-                if (proxy->rcv_bytes < DNS_TCP_PKT_LEN || proxy->rcv_bytes !=
-                    ntohs(*(uint16_t*)proxy->buff)) {
-                    FD_SET(proxy->loc_sock, &rd_set);
-                    DEBUG_MSG(stderr, "TCP Child %d: added socket %d to watched"
-                        " set", pid, proxy->loc_sock);
-                } else {
-                    int sent_bytes = 0;
-                    /* FIX ME: REMOVE ALL THIS CRAP*/
-                    printf("-------------------------------------------------------\n");
-                    for (i = 0; i < proxy->rcv_bytes; i++)
-                        printf("%2X", (int)proxy->buff[i]);
-                    printf("\n");
-                    printf("-------------------------------------------------------\n");
-
-                    // FIX ME...in pool we have a fwd_addr never used!!
-                    /* we can finally proxy our request */
-                    len = sizeof(br->rem_srv);
-                    if ((connect(proxy->rem_sock, (struct sockaddr*)
-                        &(br->rem_srv), len)) == -1) {
-                        ERROR_MSG(stderr, "TCP Child %d, can't connect to " 
-                            "remote server (%s). Errorno %d (%s)\n ", pid, 
-                            inet_ntop(AF_INET, &(br->rem_srv.sin_addr), 
-                            straddr, INET_ADDRSTRLEN), errno, strerror(errno));
-                        /* release resources */
-                        shutdown(proxy->loc_sock, SHUT_RDWR);
-                        FD_CLR(proxy->loc_sock, &rd_set);
-                        socket_pool_release(br->pool, proxy);
-                    }
-                    DEBUG_MSG(stderr, "TCP Child %d, connected to %s\n",
-                        inet_ntop(AF_INET, (struct sockaddr_in*)
-                        &(proxy->rem_srv.sin_addr),straddr, INET_ADDRSTRLEN));
-                    /* sending data */
-                    sent_bytes = write(proxy->rem_sock, proxy->buff, 
-                        proxy->rcv_bytes);
-                    DEBUG_MSG(stderr, "TCP Child %d, sent %d/%d bytes to %s\n",
-                        pid, sent_bytes, proxy->read_bytes, inet_ntop(AF_INET, 
-                        (struct sockaddr_in*)&(proxy->rem_srv.sin_addr),
-                        straddr, INET_ADDRSTRLEN));
-                    if(sent_bytes && sent_bytes != proxy->rcv_bytes) {
-                        int partial = 0;
-                        do {
-                            if(partial += write(proxy->rem_sock, 
-                                &(proxy->buff[sent_bytes - 1]), 
-                                proxy->rcv_bytes - sent_bytes) == -1) {
-                                    ERROR_MSG(stderr, "TCP Child %d, error while"
-                                        " sending partial. Errno %d (%s)\n",
-                                        pid, errno, strerror(errno));
-                                    /* release resources */
-                                    shutdown(proxy->rem_sock, SHUT_RDWR);
-                                    shutdown(proxy->loc_sock, SHUT_RDWR);
-                                    FD_CLR(proxy->loc_sock, &rd_set);
-                                    socket_pool_release(br->pool, proxy);
-                                }
-                            sent_bytes += partial;
-                        } while(sent_bytes != proxy->rcv_bytes);
-                    }
-                }
             } else {
                 INFO_MSG(stderr, "We don't have elements available or pool is"
                     " null discard message\n");
-                /* At least skip one iteration with this file descriptor in 
-                * in oder to prevent client requests to being discarded
-                */
+                /* At least skip one iteration */
                 FD_CLR(br->listen_sock, &rd_set);
+                continue;
             }
+        } else { /* Maybe we shoud do a check here with FD set */
+            /* go from the tail to the head...tail element is the oldest...*/
+            conversation_t* req = br->pool->used_tail;
+            while (req) {
+                if (FD_ISSET(req->loc_sock, &rd_set)) {
+                    conversation_t* prev_req;
+                    int ret = handle_outside_requests(req);
+                    if (ret == -1) {
+                        ERROR_MSG(stderr, "TCP Child %d error while handling"
+                        "incoming request from sock %d\n", pid, req->loc_sock);
+                        close(req->loc_sock);
+                        prev_req = req->prev; 
+                        socket_pool_release(br->pool, req);
+                        req = prev_req;
+                    } else {
+                        /* forward data and update buffer offset for next read */
+                        if(forward_messages(br, req) == EXIT_FAILURE) {
+                            close(req->loc_sock);
+                            FD_CLR(req->loc_sock, &rd_set);
+                            prev_req = req->prev; 
+                            socket_pool_release(br->pool, req);
+                            req = prev_req;
+                        } else {
+                            if (req->expected_bytes == req->rcv_bytes)
+                                FD_CLR(req->loc_sock, &rd_set);
+                        }
+                    }
+                }
+                req = req->prev;
+            }        
         }
 
         /* 
         *  let's handle the comunication coming from the relay part
         *  starting from the tail (the oldest one)
         */
-        conversation_t* elem;
+        conversation_t* elem = br->pool->used_tail;
         // go from the tail to the head...tail element is the oldest...
-        for (elem = br->pool->used_tail; elem != NULL; elem = elem->prev) {
-            if(FD_ISSET(elem->rem_sock, &br->pool->rd_set)) {
+        while (elem) {
+            if(FD_ISSET(elem->rem_sock, &rd_set)) {
                 /* we got an answer so we will forward back to the original
                 * client 
                 */
@@ -325,8 +272,8 @@ int tcp_fake_dns(tcp_broker_t* br)
                     "to %s\n", pid, sent_bytes, 
                     inet_ntop(AF_INET, &(br->enemy_addr.sin_addr), 
                     straddr, INET_ADDRSTRLEN))
-                shutdown(elem->loc_sock, SHUT_RDWR);
-                shutdown(elem->rem_sock, SHUT_RDWR);
+                close(elem->loc_sock);
+                close(elem->rem_sock);
                 socket_pool_release(br->pool, elem);
                 DEBUG_MSG(stderr, "TCP Child %d: Release element: Now we have "
                     "%d used element, %d free element\n", pid,
@@ -350,6 +297,116 @@ int tcp_fake_dns(tcp_broker_t* br)
     }
     close(br->listen_sock);
     socket_pool_free(br->pool);
+
+    return EXIT_SUCCESS;
+}
+
+
+int handle_outside_requests(conversation_t* c)
+{
+    int res = 0;
+    if (!c)
+        return EXIT_FAILURE;
+
+    /* we will try to read as much as we can...*/
+    res = recv(c->loc_sock, &c->buff[c->offset], MAX_DNS_TCP, MSG_DONTWAIT);
+    if(res == -1) {
+        /* something went wrong...shouldn't be actually */
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            DEBUG_MSG(stderr, "TCP Child %d, no data available from socket %d"
+                "...strange as we had been notified data were available", pid, 
+                c->loc_sock);
+            return EXIT_SUCCESS;
+        } 
+        DEBUG_MSG(stderr, "TCP Child %d, can't read any data from socket " 
+            "%d we will remove shut down this stream\n", pid, c->loc_sock);
+        return EXIT_FAILURE;
+    } 
+
+    c->rcv_bytes += res;
+    /* let's check how many bytes we read if we have less than 2 bytes
+    * or not complete DNS packet len */
+    if (c->offset < DNS_TCP_PKT_LEN && res >= DNS_TCP_PKT_LEN) {
+        c->expected_bytes = ntohs(*(uint16_t*)(c->buff));
+        if (res < c->expected_bytes) {
+            DEBUG_MSG(stderr, "TCP Child %d: need more data from %d\n", pid, 
+                c->loc_sock);
+            return EXIT_SUCCESS;
+        }
+    }
+    return EXIT_SUCCESS;
+}
+
+
+int forward_messages(tcp_broker_t* br, conversation_t* c)
+{
+    int sent_bytes = 0;
+    int limit;
+    int len;
+    char straddr[INET_ADDRSTRLEN];
+    int partial = 0;
+
+    int i;
+
+    if(!br || !c) {
+        ERROR_MSG(stderr, "TCP Child %d, can't forward message to remote server" 
+            " (%s), as either broker (%p) or conversation (%p) is null\n ", pid, 
+            inet_ntop(AF_INET, &(br->rem_srv.sin_addr), straddr, 
+                INET_ADDRSTRLEN), br, c);
+        return EXIT_FAILURE;
+    }
+
+    if (c->rcv_bytes == c->offset)
+        limit = c->rcv_bytes;
+    else 
+        limit = c->rcv_bytes - c->offset;
+
+    /* FIX ME: REMOVE ALL THIS CRAP*/
+    printf("-------------------------------------------------------\n");
+    for (i = 0; i < limit; i++)
+        printf("%02X", c->buff[i] & 0xFF);
+    printf("\n");
+    printf("-------------------------------------------------------\n");
+
+    // FIX ME...in pool we have a fwd_addr never used!!
+    /* we can finally proxy our request */
+    len = sizeof(br->rem_srv);
+    if ((connect(c->rem_sock, (struct sockaddr*)&(br->rem_srv), len)) == -1) {
+        ERROR_MSG(stderr, "TCP Child %d, can't connect to remote server (%s)."
+            " Errno %d (%s)\n ", pid, inet_ntop(AF_INET, 
+            &(br->rem_srv.sin_addr), straddr, INET_ADDRSTRLEN), 
+            errno, strerror(errno));
+        /* release resources */
+        return EXIT_FAILURE;
+        
+    }
+    DEBUG_MSG(stderr, "TCP Child %d, connected to %s\n",
+        inet_ntop(AF_INET, (struct sockaddr_in*)&(proxy->rem_srv.sin_addr), 
+        straddr, INET_ADDRSTRLEN));
+    /* sending data */
+    sent_bytes = write(c->rem_sock, &(c->buff[c->offset]), limit);
+    DEBUG_MSG(stderr, "TCP Child %d, sent %d/%d bytes to %s\n", pid, sent_bytes, 
+        proxy->read_bytes, inet_ntop(AF_INET, 
+        (struct sockaddr_in*)&(proxy->rem_srv.sin_addr),
+        straddr, INET_ADDRSTRLEN));
+
+    if (sent_bytes && (sent_bytes == limit)) {
+        c->offset += sent_bytes;
+        return EXIT_SUCCESS;
+    }
+
+    /* For some reasons we couln't send all data with 1 write...let's finish */
+    do {
+        partial = write(c->rem_sock, &(c->buff[sent_bytes - 1]), 
+            limit - sent_bytes);
+        if(partial == -1) {
+            ERROR_MSG(stderr, "TCP Child %d, error while sending partial. "
+                "Errno %d (%s)\n", pid, errno, strerror(errno));
+            return EXIT_FAILURE;
+        }
+        sent_bytes += partial;
+        c->offset += partial;
+    } while(sent_bytes != limit);
 
     return EXIT_SUCCESS;
 }

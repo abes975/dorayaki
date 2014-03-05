@@ -3,6 +3,10 @@
 
 #include "socket_pool.h"
 
+#define REQ_NEED_MORE_DATA 0
+#define REQ_CAN_FORWARD 1
+#define REQ_ERROR   2
+
 typedef struct tcp_broker {
     int listen_sock; /*!< Listening tcp socket fd... */
     socket_pool_t* pool; /*!< Forwarded upd socket pool... */

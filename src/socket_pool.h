@@ -19,7 +19,9 @@ typedef struct conversation_t {
     int rem_sock; /*<! Used only for TCP conversation */
     struct sockaddr_in enemy_addr; /*<! Used for UDP and TCP conversation */
     struct sockaddr_in fwd_addr; /*<! Used only for TCP conversation */
-    uint32_t rcv_bytes; /*<! See what to do here as used only in TCP */
+    uint16_t rcv_bytes; /*<! See what to do here as used only in TCP */
+    uint16_t offset; /*<! See what to do here as used only in TCP */
+    uint16_t expected_bytes; /*<! See what to do here as used only in TCP */
     uint8_t* buff; /*<! See what to do here as used only in TCP */
     struct conversation_t* prev;
     struct conversation_t* next;

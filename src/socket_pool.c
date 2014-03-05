@@ -189,6 +189,8 @@ bool socket_pool_release(socket_pool_t* p, conversation_t* c)
         FD_CLR(c->rem_sock, &(p->rd_set));
     if(c->rcv_bytes) /* TCP case only */
         c->rcv_bytes = 0;
+    if(c->offset) /* TCP case only */
+        c->offset = 0;
     DEBUG_MSG(stderr, "Released element %p from %p, max_count (%d == %d) "
         "used_count + free_count \n", c, p->used_head, p->capacity,
         p->used_count + p->free_count);
