@@ -21,3 +21,4 @@
 
 #define INFO_MSG(fd, fmt, ...) \
         fprintf(fd, "[INFO] (%s): " fmt "\n", __func__, ##__VA_ARGS__);
+
