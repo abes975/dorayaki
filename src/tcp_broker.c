@@ -28,6 +28,9 @@ pid_t pid;
 
 static int handle_outside_requests(conversation_t* c);
 static int forward_messages(tcp_broker_t* br, conversation_t* c);
+static void fdset_add(fd_set* out, fd_set* in, int max_fd);
+static int fdset_merge(fd_set* merged, fd_set* first, int max_1st, 
+    fd_set* second, int max_2nd);
 
 /*! \brief Create a listening tcp socket on port 53
 * 
@@ -112,8 +115,8 @@ int tcp_fake_dns(tcp_broker_t* br)
 {
     /* number of consecutive timeouts in order to clean used queue */
     uint32_t tmouts = 0;
-    int max_fd = -1;
-    fd_set rd_set;
+    int max_fd = -1, max_clients_fd = -1;
+    fd_set rd_set, clients_set;
     struct timeval timeout;   
     socklen_t len;
     ssize_t sent_bytes = 0, rcv_bytes = 0;
@@ -128,20 +131,24 @@ int tcp_fake_dns(tcp_broker_t* br)
     *   Probaly will be removed soon ;-)
     */
     FD_ZERO(&rd_set);
+    FD_ZERO(&clients_set);
     /* set read file descriptor set for select driven loop */
-    rd_set = br->pool->rd_set;
+    //rd_set = br->pool->rd_set;
     FD_SET(br->listen_sock, &rd_set);
 
-    max_fd = (br->listen_sock > socket_pool_max_fd_used(br->pool)) ?
-         br->listen_sock + 1: socket_pool_max_fd_used(br->pool) + 1;
+    //max_fd = (br->listen_sock > socket_pool_max_fd_used(br->pool)) ?
+    //     br->listen_sock + 1: socket_pool_max_fd_used(br->pool) + 1;
+    max_fd = br->listen_sock + 1;
 
     while(keep_going) {
-        int ret = 0;
+        int ready_fd = 0;
+        /* we will put here fd returned from accept call */
+        //FD_ZERO(&clients_set);
         
         timeout.tv_sec = 5;
         timeout.tv_usec = 0;
 
-        if ((ret = select(max_fd, &rd_set, NULL, NULL, &timeout)) == -1) {
+        if ((ready_fd = select(max_fd, &rd_set, NULL, NULL, &timeout)) == -1) {
             if (errno == EINTR) {
                 DEBUG_MSG(stderr, "TCP Pid: %d, select received a signal "
                     "while waiting for events, returning\n", pid);
@@ -151,7 +158,7 @@ int tcp_fake_dns(tcp_broker_t* br)
                     pid, errno, strerror(errno));
                 return EXIT_FAILURE;
             }
-        } else if (!ret) {
+        } else if (!ready_fd) {
             /* timeout ;-) */
             ERROR_MSG(stderr, "Timeout from TCP child %d (consecutive timeouts"
                 " %u)\n", pid, tmouts);
@@ -167,8 +174,12 @@ int tcp_fake_dns(tcp_broker_t* br)
                     pid, socket_pool_how_many_used(br->pool));
             }
             /* set read file descriptor set for next iteration as we stop here*/
-            rd_set = br->pool->rd_set;    
+            max_fd = fdset_merge(&rd_set, &clients_set, max_clients_fd, 
+                &(br->pool->rd_set), br->pool->max_fd);
             FD_SET(br->listen_sock, &rd_set);
+
+            max_fd = (br->listen_sock > max_fd) ?
+                br->listen_sock + 1: max_fd + 1;
             // skip to next iteration
             continue;
         }
@@ -177,6 +188,8 @@ int tcp_fake_dns(tcp_broker_t* br)
         tmouts = 0;
         /* we have a new request from outside guests >:) */
         if (FD_ISSET(br->listen_sock, &rd_set)) {
+            ready_fd--;
+            printf("Ready FD = %d\n", ready_fd);
             conversation_t* proxy = socket_pool_acquire(br->pool);
             if (proxy) {
                 //now handle incoming connection traffic
@@ -195,26 +208,34 @@ int tcp_fake_dns(tcp_broker_t* br)
                     socket_pool_release(br->pool, proxy);
                     continue;
                 } 
-
-                DEBUG_MSG(stderr, "TCP Child %d, got a connection from %s\n",
-                    inet_ntop(AF_INET, (struct sockaddr_in*)
-                    &(proxy->enemy_addr.sin_addr),straddr, INET_ADDRSTRLEN));
+                DEBUG_MSG(stderr, "TCP Child %d, got a connection from %s on "
+                    "fd %d\n", pid, inet_ntop(AF_INET, (struct sockaddr_in*)
+                    &(proxy->enemy_addr.sin_addr), straddr, INET_ADDRSTRLEN), proxy->loc_sock);
                 //fprintf(stderr, "\tChild %d finished read critical section...\n", pid);
                 //sem_post(&read_sem);
+                FD_SET(proxy->loc_sock, &clients_set);
+                max_clients_fd = (proxy->loc_sock > max_clients_fd) ? 
+                    proxy->loc_sock : max_clients_fd;
             } else {
                 INFO_MSG(stderr, "We don't have elements available or pool is"
                     " null discard message\n");
                 /* At least skip one iteration */
+                //FD_CLR(br->listen_sock, &rd_set);
+                max_fd = fdset_merge(&rd_set, &br->pool->rd_set, br->pool->max_fd, 
+                    &clients_set, max_clients_fd);
                 FD_CLR(br->listen_sock, &rd_set);
                 continue;
             }
-        } else { /* Maybe we shoud do a check here with FD set */
+        } else if (ready_fd) { 
+            /* Maybe we shoud do a check here with FD set */
             /* go from the tail to the head...tail element is the oldest...*/
+            DEBUG_MSG(stderr, "TCP child %d: Trying to read from accept sockets\n", pid);
             conversation_t* req = br->pool->used_tail;
             while (req) {
                 if (FD_ISSET(req->loc_sock, &rd_set)) {
                     conversation_t* prev_req;
                     int ret = handle_outside_requests(req);
+                    ready_fd--;
                     if (ret == -1) {
                         ERROR_MSG(stderr, "TCP Child %d error while handling"
                         "incoming request from sock %d\n", pid, req->loc_sock);
@@ -232,7 +253,7 @@ int tcp_fake_dns(tcp_broker_t* br)
                             req = prev_req;
                         } else {
                             if (req->expected_bytes == req->rcv_bytes)
-                                FD_CLR(req->loc_sock, &rd_set);
+                                FD_CLR(req->loc_sock, &clients_set);
                         }
                     }
                 }
@@ -244,25 +265,39 @@ int tcp_fake_dns(tcp_broker_t* br)
         *  let's handle the comunication coming from the relay part
         *  starting from the tail (the oldest one)
         */
-        conversation_t* elem = br->pool->used_tail;
+        conversation_t* resp = br->pool->used_tail;
         // go from the tail to the head...tail element is the oldest...
-        while (elem) {
-            if(FD_ISSET(elem->rem_sock, &rd_set)) {
+        while (resp && ready_fd) {
+            if(FD_ISSET(resp->rem_sock, &rd_set)) {
+                ready_fd--;
+                conversation_t* prev_resp;
                 /* we got an answer so we will forward back to the original
                 * client 
                 */
                 DEBUG_MSG(stderr, "TCP Child %d Got a message from fd = %d\n", 
-                    pid, elem->rem_sock);
+                    pid, resp->rem_sock);
                 /* Read response */
-                rcv_bytes = recv(elem->rem_sock, elem->buff, elem->rcv_bytes, 0);
-                if(rcv_bytes != -1 && rcv_bytes != elem->rcv_bytes)
+                rcv_bytes = recv(resp->rem_sock, resp->buff, TCP_MSG_BUF_SIZE, 0);
+                if(rcv_bytes == -1) {
+                    ERROR_MSG(stderr, "TCP Child %d: Error occurred while "
+                    "reading response from sock %d\n", pid, resp->rem_sock);
+                    prev_resp = resp->prev;
+                    socket_pool_release(br->pool, resp);
+                    resp = prev_resp;
                     continue;
+                } // FIX ME missing stuff here! check size received
+                    
                 // send back response and then release socket
                 DEBUG_MSG(stderr, "TCP Child %d wants to write back...\n", pid);
-                sent_bytes = send(elem->loc_sock, elem->buff, rcv_bytes, 0);
+                sent_bytes = send(resp->loc_sock, resp->buff, rcv_bytes, 0);
                 if(sent_bytes == -1) {
                     ERROR_MSG(stderr, "TCP Child %d: Error while relaying TCP" 
                         " packet. Error %s (%d)", pid, strerror(errno), errno);
+                    FD_CLR(resp->loc_sock, &clients_set);
+                    prev_resp = resp->prev;
+                    socket_pool_release(br->pool, resp);
+                    resp = prev_resp;
+                    continue;
                 } else if(sent_bytes != rcv_bytes) {
                     ERROR_MSG(stderr, "TCP Child %d: An error occurred while "
                         "relaying TCP packet. Sent only %d/%d\n",
@@ -270,11 +305,15 @@ int tcp_fake_dns(tcp_broker_t* br)
                 } 
                 DEBUG_MSG(stderr, "TCP Child %d: Successfull relayed %d bytes "
                     "to %s\n", pid, sent_bytes, 
-                    inet_ntop(AF_INET, &(br->enemy_addr.sin_addr), 
+                    inet_ntop(AF_INET, &(resp->enemy_addr.sin_addr), 
                     straddr, INET_ADDRSTRLEN))
-                close(elem->loc_sock);
-                close(elem->rem_sock);
-                socket_pool_release(br->pool, elem);
+                close(resp->loc_sock);
+                close(resp->rem_sock);
+                FD_CLR(resp->loc_sock, &clients_set);
+                FD_CLR(resp->rem_sock, &br->pool->rd_set);
+                prev_resp = resp->prev;
+                socket_pool_release(br->pool, resp);
+                resp = prev_resp;
                 DEBUG_MSG(stderr, "TCP Child %d: Release element: Now we have "
                     "%d used element, %d free element\n", pid,
                     socket_pool_how_many_used(br->pool),
@@ -284,13 +323,14 @@ int tcp_fake_dns(tcp_broker_t* br)
                 */
                 break;
             }
+            resp = resp->prev;
         }
-        // FIX ME...WE NEED TO HANLDE ALL THE *->loc_sock waiting for some more
-        // data to come from the evil hacker...
-
         /* Set for next iteration */
-        rd_set = br->pool->rd_set;
+        max_fd = fdset_merge(&rd_set, &br->pool->rd_set, br->pool->max_fd, 
+            &clients_set, max_clients_fd);
         FD_SET(br->listen_sock, &rd_set);
+        DEBUG_MSG(stderr, "TCP Child %d: max_fd = %d, merged read_set\n", pid, max_fd);
+        
 
         timeout.tv_sec = 5;
         timeout.tv_usec = 0;
@@ -307,6 +347,7 @@ int handle_outside_requests(conversation_t* c)
     int res = 0;
     if (!c)
         return EXIT_FAILURE;
+    printf("%d %s:%d sono qui finalmente\n", pid, __func__, __LINE__);
 
     /* we will try to read as much as we can...*/
     res = recv(c->loc_sock, &c->buff[c->offset], MAX_DNS_TCP, MSG_DONTWAIT);
@@ -324,6 +365,7 @@ int handle_outside_requests(conversation_t* c)
     } 
 
     c->rcv_bytes += res;
+    printf("%d %s:%d sono qui finalmente e ho ricevuto %d\n", pid, __func__, __LINE__, res);
     /* let's check how many bytes we read if we have less than 2 bytes
     * or not complete DNS packet len */
     if (c->offset < DNS_TCP_PKT_LEN && res >= DNS_TCP_PKT_LEN) {
@@ -380,14 +422,14 @@ int forward_messages(tcp_broker_t* br, conversation_t* c)
         return EXIT_FAILURE;
         
     }
-    DEBUG_MSG(stderr, "TCP Child %d, connected to %s\n",
-        inet_ntop(AF_INET, (struct sockaddr_in*)&(proxy->rem_srv.sin_addr), 
+    DEBUG_MSG(stderr, "TCP Child %d, connected to %s\n", pid,
+        inet_ntop(AF_INET, (struct sockaddr_in*)&(br->rem_srv.sin_addr), 
         straddr, INET_ADDRSTRLEN));
     /* sending data */
     sent_bytes = write(c->rem_sock, &(c->buff[c->offset]), limit);
     DEBUG_MSG(stderr, "TCP Child %d, sent %d/%d bytes to %s\n", pid, sent_bytes, 
-        proxy->read_bytes, inet_ntop(AF_INET, 
-        (struct sockaddr_in*)&(proxy->rem_srv.sin_addr),
+        c->rcv_bytes, inet_ntop(AF_INET, 
+        (struct sockaddr_in*)&(br->rem_srv.sin_addr),
         straddr, INET_ADDRSTRLEN));
 
     if (sent_bytes && (sent_bytes == limit)) {
@@ -409,4 +451,22 @@ int forward_messages(tcp_broker_t* br, conversation_t* c)
     } while(sent_bytes != limit);
 
     return EXIT_SUCCESS;
+}
+
+
+static void fdset_add(fd_set* out, fd_set* in, int max_fd) 
+{
+    int i;
+    for(i = 0; i < max_fd; i++)
+        if(FD_ISSET(i, in))
+            FD_SET(i, out);
+}
+
+static int fdset_merge(fd_set* merged, fd_set *first, int max_1st, 
+    fd_set *second, int max_2nd)
+{
+    FD_ZERO(merged);
+    fdset_add(merged, first, max_1st);
+    fdset_add(merged, second, max_2nd);
+    return max_1st > max_2nd ? max_1st : max_2nd;
 }
