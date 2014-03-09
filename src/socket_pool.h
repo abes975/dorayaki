@@ -8,6 +8,8 @@
 #include <netinet/in.h>
 #include <sys/select.h>
 
+#define TCP_MSG_BUF_SIZE 2 << 16
+
 /* That's a bit ugly...we will use same data structure for TCP or UDP
 * For UDP rem_sock and enemy_addr are the only used while for TCP
 * conversation we will use both...it's a bit waste of memory but now

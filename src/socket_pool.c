@@ -72,7 +72,7 @@ socket_pool_t* socket_pool_create(uint32_t capacity, bool istcp)
              * we pre-allocate it to be 2^16 bytes...waste of memory but we will
              * do optimization later
             */
-            dummy->buff = (uint8_t*)malloc((2 << 16) * sizeof(uint8_t));
+            dummy->buff = (uint8_t*)malloc(TCP_MSG_BUF_SIZE * sizeof(uint8_t));
             if (!dummy->buff)
                 FATAL_ERROR(stderr, EXIT_FAILURE, "Can't allocate buffer for" 
                 "TCP data");
